@@ -1,99 +1,78 @@
-// index.js
-// Simple CloudPRNT server for Aldo's Pizzeria
+// Simple CloudPRNT server for Aldo's
 
 const express = require("express");
 const cors = require("cors");
+
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-// Allow JSON body
-app.use(express.json());
-// Allow requests from your kiosk (Netlify, local, etc.)
+// ====== MIDDLEWARE ======
 app.use(cors());
+app.use(express.json());
 
-// Here we store the last order that the kiosk sends
-let lastOrder = null;
+// Aquí guardamos el último ticket que mandó el kiosco
+let lastTicketText = null;
 
-/**
- * POST /order
- * Your kiosk (app de Aldo's) will send the order here.
- *
- * Example body:
- * {
- *   "ticket": "1x Cheese Pizza\n1x Wings (10)...",
- *   "total": "$32.50",
- *   "payMethod": "cash" or "card",
- *   "orderType": "pickup" or "delivery"
- * }
- */
-app.post("/order", (req, res) => {
-  console.log("New order received:");
-  console.log(JSON.stringify(req.body, null, 2));
-
-  lastOrder = req.body || null;
-
-  return res.json({
-    ok: true,
-    message: "Order stored for CloudPRNT printer."
-  });
+// ====== RUTA HOME (solo para probar) ======
+app.get("/", (req, res) => {
+  res.send("✅ Aldo's CloudPRNT server is running.");
 });
 
-/**
- * GET /cloudprnt
- * The Star CloudPRNT printer will call this URL.
- * It asks: “Do you have a job for me?”
- */
+// =========================================================
+// 1) El kiosco (tu página de GitHub) manda la orden aquí
+//    POST https://aldos-printcore-server-1.onrender.com/submit
+// =========================================================
+app.post("/submit", (req, res) => {
+  const { ticket, deviceId } = req.body || {};
+
+  if (!ticket) {
+    console.log("❌ /submit sin ticket");
+    return res.status(400).json({ ok: false, error: "Missing ticket" });
+  }
+
+  // Opcional: podríamos comprobar deviceId si quisieras
+  console.log("🧾 New ticket received from kiosk.");
+  lastTicketText = ticket;
+
+  return res.json({ ok: true });
+});
+
+// =========================================================
+// 2) La impresora pregunta aquí si hay trabajo
+//    GET https://aldos-printcore-server-1.onrender.com/cloudprnt
+// =========================================================
 app.get("/cloudprnt", (req, res) => {
-  // No pending order -> tell printer "no job"
-  if (!lastOrder) {
+  // Si NO hay ticket pendiente
+  if (!lastTicketText) {
+    console.log("🔄 Printer poll - no job.");
     return res.json({
       jobReady: false
     });
   }
 
-  // Build simple kitchen-style ticket text
-  const now = new Date();
-  const timeStr = now.toISOString().replace("T", " ").slice(0, 19);
+  // Si SÍ hay ticket pendiente
+  console.log("📨 Printer poll - sending job to printer.");
 
-  const ticketText =
-    "ALDO'S PIZZERIA\n" +
-    "------------------------\n" +
-    `Time: ${timeStr}\n` +
-    `Order type: ${lastOrder.orderType || "pickup"}\n` +
-    `Payment: ${lastOrder.payMethod || "unknown"}\n` +
-    "------------------------\n\n" +
-    (lastOrder.ticket || "") +
-    "\n\n" +
-    "------------------------\n" +
-    `TOTAL: ${lastOrder.total || "$0.00"}\n` +
-    "THANK YOU!\n\n\n";
-
-  // Encode to base64 for CloudPRNT
-  const base64Content = Buffer.from(ticketText, "utf8").toString("base64");
-
-  const jobToken = Date.now().toString();
+  // Convertimos el texto a base64 (CloudPRNT espera datos binarios/base64)
+  const dataBase64 = Buffer.from(lastTicketText, "utf8").toString("base64");
 
   const job = {
     jobReady: true,
-    mediaTypes: ["text/plain"],
-    jobToken: jobToken,
-    content: base64Content
+    job: {
+      // Texto plano; la impresora usará su fuente por defecto
+      contentType: "text/plain",
+      // Datos del ticket en base64
+      data: dataBase64
+    }
   };
 
-  // Clear last order so the same order is not re-printed
-  lastOrder = null;
+  // Borramos el ticket después de entregarlo
+  lastTicketText = null;
 
   return res.json(job);
 });
 
-// Simple homepage to test that the server is running
-app.get("/", (req, res) => {
-  res.send(
-    "<h1>Aldo's CloudPRNT Server</h1><p>Endpoints:<br>POST /order<br>GET /cloudprnt</p>"
-  );
-});
-
-// Start server
-const PORT = process.env.PORT || 3000;
+// ====== ARRANCAR SERVIDOR ======
 app.listen(PORT, () => {
-  console.log(`CloudPRNT server running on port ${PORT}`);
+  console.log(`🚀 Aldo's CloudPRNT server listening on port ${PORT}`);
 });
